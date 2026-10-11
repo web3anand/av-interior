@@ -9,15 +9,27 @@ import {
   Trash2,
 } from "lucide-react";
 import { BillSheet } from "@/components/bill-sheet";
+import { PhoneBackup } from "@/components/phone-backup";
 import {
   type Bill,
+  type Customer,
   type DocKind,
   type Line,
   type Profile,
   billTotal,
+  billAdvance,
+  billBalance,
   billWords,
+  docTitle,
   lineAmount,
   lineFormula,
+  measuresFromSizes,
+  partSqft,
+  pdfFileName,
+  sameCustomer,
+  blankSize,
+  advanceLabel,
+  balanceLabel,
 } from "@/lib/bill-model";
 import { formatDocDate, formatInr } from "@/lib/money";
 import { readSignature } from "@/lib/signature";
@@ -35,13 +47,35 @@ const btnQuiet =
   "inline-flex min-h-11 items-center justify-center gap-2 rounded-lg px-3 text-sm font-semibold text-ink transition-colors duration-150 hover:bg-surface";
 
 function buyerTitle(bill: Bill): string {
+  const named = bill.customerName.trim();
+  if (named) return named;
   const line = bill.buyer.split("\n").map((part) => part.trim()).find(Boolean);
-  return line || "No buyer yet";
+  return line || "No customer yet";
+}
+
+type KindFilter = "all" | DocKind;
+
+function matchesQuery(doc: Bill, query: string): boolean {
+  const q = query.trim().toLowerCase();
+  if (!q) return true;
+  const hay = [
+    doc.number,
+    doc.customerName,
+    doc.buyer,
+    doc.phone,
+    doc.kind === "invoice" ? "invoice" : "quote quotation",
+    `${doc.kind === "invoice" ? "invoice" : "quote"} ${doc.number}`,
+    ...doc.lines.map((line) => line.description),
+  ]
+    .join("\n")
+    .toLowerCase();
+  return q.split(/\s+/).every((part) => hay.includes(part));
 }
 
 export function Desk() {
   const profile = useBills((s) => s.profile);
   const docs = useBills((s) => s.docs);
+  const customers = useBills((s) => s.customers);
   const activeId = useBills((s) => s.activeId);
   const setProfile = useBills((s) => s.setProfile);
   const restoreLetterhead = useBills((s) => s.restoreLetterhead);
@@ -52,11 +86,14 @@ export function Desk() {
   const newBill = useBills((s) => s.newBill);
   const duplicateBill = useBills((s) => s.duplicateBill);
   const deleteBill = useBills((s) => s.deleteBill);
+  const newFromPrevious = useBills((s) => s.newFromPrevious);
+  const pickCustomer = useBills((s) => s.pickCustomer);
   const selectBill = useBills((s) => s.selectBill);
   const loadSample = useBills((s) => s.loadSample);
 
-  const [pane, setPane] = useState<Pane>("preview");
+  const [pane, setPane] = useState<Pane>("edit");
   const [query, setQuery] = useState("");
+  const [kindFilter, setKindFilter] = useState<KindFilter>("all");
   const [sigError, setSigError] = useState("");
   const [confirmDelete, setConfirmDelete] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -71,16 +108,13 @@ export function Desk() {
     setConfirmDelete(false);
   }, [bill?.id]);
 
-  const q = query.trim().toLowerCase();
+  useEffect(() => {
+    document.title = bill ? pdfFileName(bill) : "AV Interior — Invoice & Quote";
+  }, [bill]);
+
   const visible = [...docs]
-    .filter((doc) => {
-      if (!q) return true;
-      return (
-        doc.buyer.toLowerCase().includes(q) ||
-        doc.number.toLowerCase().includes(q) ||
-        doc.lines.some((line) => line.description.toLowerCase().includes(q))
-      );
-    })
+    .filter((doc) => (kindFilter === "all" ? true : doc.kind === kindFilter))
+    .filter((doc) => matchesQuery(doc, query))
     .sort((a, b) => b.updatedAt - a.updatedAt);
 
   function start(kind: DocKind) {
@@ -89,9 +123,9 @@ export function Desk() {
   }
 
   return (
-    <div className="desk flex min-h-dvh flex-col bg-canvas text-ink lg:h-dvh lg:overflow-hidden">
+    <div className="desk flex min-h-dvh flex-col overflow-x-hidden bg-canvas text-ink lg:h-dvh lg:overflow-hidden">
       <div className="no-print sticky top-0 z-20 border-b border-brass bg-olive-deep text-cream">
-        <header className="flex items-center justify-between gap-3 px-4 py-3">
+        <header className="flex items-center justify-between gap-3 px-4 py-3 pt-[max(0.75rem,env(safe-area-inset-top))]">
           <div className="flex min-w-0 items-center gap-3">
             <span className="grid size-10 shrink-0 place-items-center rounded-lg border border-cream/20">
               <HouseMark />
@@ -100,30 +134,14 @@ export function Desk() {
               <p className="truncate font-display text-xl leading-none text-cream">
                 {profile.name || "AV Interior"}
               </p>
-              <p className="mt-1 text-sm text-cream/75">Invoice & quotation desk</p>
+              <p className="mt-1 truncate text-sm text-cream/75">Invoice & quotation desk</p>
             </div>
           </div>
-          <button type="button" className={btnPrimary} onClick={() => window.print()}>
+          <button type="button" className={`${btnPrimary} hidden shrink-0 lg:inline-flex`} onClick={() => window.print()} disabled={!bill}>
             <Printer className="size-4" aria-hidden="true" />
-            Print
+            Save PDF
           </button>
         </header>
-        <div className="grid grid-cols-2 border-t border-cream/15 lg:hidden">
-          <button
-            type="button"
-            className={`min-h-11 text-sm font-semibold ${pane === "edit" ? "bg-cream text-olive-deep" : "text-cream"}`}
-            onClick={() => setPane("edit")}
-          >
-            Edit
-          </button>
-          <button
-            type="button"
-            className={`min-h-11 text-sm font-semibold ${pane === "preview" ? "bg-cream text-olive-deep" : "text-cream"}`}
-            onClick={() => setPane("preview")}
-          >
-            Preview
-          </button>
-        </div>
       </div>
 
       <div className="desk-grid lg:grid lg:min-h-0 lg:flex-1 lg:grid-cols-3">
@@ -138,6 +156,10 @@ export function Desk() {
               visible={visible}
               query={query}
               setQuery={setQuery}
+              kindFilter={kindFilter}
+              setKindFilter={setKindFilter}
+              customers={customers}
+              docs={docs}
               activeId={activeId}
               onSelect={(id) => {
                 selectBill(id);
@@ -152,6 +174,11 @@ export function Desk() {
                 loadSample();
                 setPane("edit");
               }}
+              onUsePrevious={() => {
+                newFromPrevious();
+                setPane("edit");
+              }}
+              onPickCustomer={pickCustomer}
               confirmDelete={confirmDelete}
               setConfirmDelete={setConfirmDelete}
               onDelete={() => {
@@ -180,9 +207,11 @@ export function Desk() {
           }`}
         >
           <p className="no-print px-4 pt-4 text-sm text-muted">
-            A4 preview. In the print dialog, turn on <span className="font-semibold text-ink">Background graphics</span> so the green header prints.
+            This bill is saved on this device. Save PDF uses the file name{" "}
+            <span className="font-semibold text-ink">{bill ? pdfFileName(bill) : "Invoice 1"}</span>. Turn on{" "}
+            <span className="font-semibold text-ink">Background graphics</span> so the green header prints.
           </p>
-          <div className="px-3 py-4 sm:px-5">
+          <div className="px-3 py-4 pb-28 sm:px-5 lg:pb-4">
             {bill ? (
               <ScaledBill>
                 <BillSheet bill={bill} profile={profile} />
@@ -193,6 +222,30 @@ export function Desk() {
           </div>
         </section>
       </div>
+      <nav className="no-print fixed inset-x-0 bottom-0 z-30 grid grid-cols-3 border-t border-cream/20 bg-olive-deep pb-[env(safe-area-inset-bottom)] text-cream lg:hidden">
+        <button
+          type="button"
+          className={`min-h-14 text-sm font-semibold ${pane === "edit" ? "bg-cream text-olive-deep" : ""}`}
+          onClick={() => setPane("edit")}
+        >
+          Edit
+        </button>
+        <button
+          type="button"
+          className={`min-h-14 text-sm font-semibold ${pane === "preview" ? "bg-cream text-olive-deep" : ""}`}
+          onClick={() => setPane("preview")}
+        >
+          Preview
+        </button>
+        <button
+          type="button"
+          className="min-h-14 text-sm font-semibold disabled:opacity-40"
+          onClick={() => window.print()}
+          disabled={!bill}
+        >
+          Save PDF
+        </button>
+      </nav>
     </div>
   );
 }
@@ -226,11 +279,17 @@ function Editor({
   visible,
   query,
   setQuery,
+  kindFilter,
+  setKindFilter,
+  customers,
+  docs,
   activeId,
   onSelect,
   onStart,
   onDuplicate,
   onLoadSample,
+  onUsePrevious,
+  onPickCustomer,
   confirmDelete,
   setConfirmDelete,
   onDelete,
@@ -249,11 +308,17 @@ function Editor({
   visible: Bill[];
   query: string;
   setQuery: (value: string) => void;
+  kindFilter: KindFilter;
+  setKindFilter: (value: KindFilter) => void;
+  customers: Customer[];
+  docs: Bill[];
   activeId: string;
   onSelect: (id: string) => void;
   onStart: (kind: DocKind) => void;
   onDuplicate: () => void;
   onLoadSample: () => void;
+  onUsePrevious: () => void;
+  onPickCustomer: (id: string) => void;
   confirmDelete: boolean;
   setConfirmDelete: (value: boolean) => void;
   onDelete: () => void;
@@ -269,9 +334,24 @@ function Editor({
   fileRef: RefObject<HTMLInputElement | null>;
 }) {
   const total = billTotal(bill);
+  const advance = billAdvance(bill);
+  const balance = billBalance(bill);
+  const earlier = docs
+    .filter(
+      (doc) =>
+        doc.id !== bill.id &&
+        ((bill.customerId && doc.customerId === bill.customerId) ||
+          sameCustomer(doc.customerName, bill.customerName)),
+    )
+    .sort((a, b) => b.updatedAt - a.updatedAt);
+  const filters: { id: KindFilter; label: string }[] = [
+    { id: "all", label: "All" },
+    { id: "invoice", label: "Invoices" },
+    { id: "quotation", label: "Quotes" },
+  ];
 
   return (
-    <div className="flex flex-col gap-6 p-4 pb-24">
+    <div className="flex flex-col gap-6 p-4 pb-28 lg:pb-8">
       <div>
         <div className="mb-2 flex items-center justify-between gap-2">
           <h2 className="font-display text-lg">Saved bills</h2>
@@ -281,9 +361,25 @@ function Editor({
           className={inputClass}
           value={query}
           onChange={(event) => setQuery(event.target.value)}
-          placeholder="Search buyer or item"
+          placeholder="Invoice 1, quote 2, or customer"
           aria-label="Search bills"
         />
+        <div className="mt-2 flex flex-wrap gap-2">
+          {filters.map((item) => (
+            <button
+              key={item.id}
+              type="button"
+              className={`min-h-11 rounded-full px-3 text-sm font-semibold ${
+                kindFilter === item.id ? "bg-olive text-cream" : "bg-surface text-ink"
+              }`}
+              onClick={() => setKindFilter(item.id)}
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
+        <p className="mt-2 text-sm text-muted">Every change is saved automatically on this phone.</p>
+        <PhoneBackup />
         <div className="mt-2 flex flex-wrap gap-2">
           <button type="button" className={btnGhost} onClick={() => onStart("invoice")}>
             <Plus className="size-4" aria-hidden="true" />
@@ -305,13 +401,13 @@ function Editor({
                   <button
                     type="button"
                     onClick={() => onSelect(doc.id)}
-                    className={`flex w-full items-center justify-between gap-3 rounded-lg border-l-4 px-3 py-2 text-left ${
+                    className={`flex min-h-12 w-full items-center justify-between gap-3 rounded-lg border-l-4 px-3 py-3 text-left ${
                       active ? "border-olive bg-surface" : "border-transparent hover:bg-surface"
                     }`}
                   >
                     <span className="min-w-0">
                       <span className="block text-xs font-semibold tracking-wide text-brass">
-                        {doc.kind === "invoice" ? "INVOICE" : "QUOTATION"} No. {doc.number} · {formatDocDate(doc.date)}
+                        {docTitle(doc.kind)} No. {doc.number} · {formatDocDate(doc.date)}
                       </span>
                       <span className="block truncate text-sm">{buyerTitle(doc)}</span>
                     </span>
@@ -377,12 +473,39 @@ function Editor({
           Buyer
         </h2>
         <label className="block">
-          <span className="mb-1 block text-sm font-medium text-muted">Name and address</span>
+          <span className="mb-1 block text-sm font-medium text-muted">Saved customer</span>
+          <select
+            className={inputClass}
+            value={customers.some((customer) => customer.id === bill.customerId) ? bill.customerId : ""}
+            onChange={(event) => {
+              if (event.target.value) onPickCustomer(event.target.value);
+            }}
+          >
+            <option value="">Choose a customer to fill this bill</option>
+            {customers.map((customer) => (
+              <option key={customer.id} value={customer.id}>
+                {customer.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="mt-3 block">
+          <span className="mb-1 block text-sm font-medium text-muted">Customer name</span>
+          <input
+            className={inputClass}
+            value={bill.customerName}
+            onChange={(event) => patchBill({ customerName: event.target.value })}
+            placeholder="Name printed above the address"
+            autoComplete="off"
+          />
+        </label>
+        <label className="mt-3 block">
+          <span className="mb-1 block text-sm font-medium text-muted">Address</span>
           <textarea
             className={`${inputClass} min-h-24 py-2`}
             value={bill.buyer}
             onChange={(event) => patchBill({ buyer: event.target.value })}
-            placeholder="Buyer name and address"
+            placeholder="Street, area, city"
           />
         </label>
         <div className="mt-3 grid gap-3 sm:grid-cols-3">
@@ -415,6 +538,32 @@ function Editor({
             />
           </label>
         </div>
+        <div className="mt-3">
+          <button type="button" className={`${btnGhost} disabled:opacity-50`} onClick={onUsePrevious} disabled={earlier.length === 0}>
+            <Copy className="size-4" aria-hidden="true" />
+            New from their last bill
+          </button>
+          {earlier.length === 0 ? (
+            <p className="mt-2 text-sm text-muted">No earlier bill for this customer yet. The name is kept for the next one.</p>
+          ) : (
+            <ul className="mt-2 space-y-1">
+              {earlier.slice(0, 6).map((doc) => (
+                <li key={doc.id}>
+                  <button
+                    type="button"
+                    className="flex w-full items-center justify-between gap-3 rounded-lg px-2 py-2 text-left hover:bg-surface"
+                    onClick={() => onSelect(doc.id)}
+                  >
+                    <span className="min-w-0 truncate text-sm">
+                      {docTitle(doc.kind)} No. {doc.number} · {formatDocDate(doc.date)}
+                    </span>
+                    <span className="shrink-0 text-sm font-semibold tabular-nums">{formatInr(billTotal(doc))}</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
       </section>
 
       <section>
@@ -444,35 +593,135 @@ function Editor({
                   <Trash2 className="size-4" aria-hidden="true" />
                 </button>
               </div>
-              <div className="mt-2 grid grid-cols-3 gap-2">
-                <label className="block">
-                  <span className="mb-1 block text-xs font-medium text-muted">Qty</span>
-                  <input
-                    className={inputClass}
-                    inputMode="decimal"
-                    value={line.quantity}
-                    onChange={(event) => patchLine(line.id, { quantity: event.target.value })}
-                  />
-                </label>
-                <label className="block">
-                  <span className="mb-1 block text-xs font-medium text-muted">Rate</span>
-                  <input
-                    className={inputClass}
-                    inputMode="decimal"
-                    value={line.rate}
-                    onChange={(event) => patchLine(line.id, { rate: event.target.value })}
-                  />
-                </label>
-                <label className="block">
-                  <span className="mb-1 block text-xs font-medium text-muted">Sq.ft</span>
-                  <input
-                    className={inputClass}
-                    inputMode="decimal"
-                    value={line.sqft}
-                    onChange={(event) => patchLine(line.id, { sqft: event.target.value })}
-                  />
-                </label>
-              </div>
+              {line.sizes.length === 0 ? (
+                <div className="mt-2 grid grid-cols-3 gap-2">
+                  <label className="block">
+                    <span className="mb-1 block text-xs font-medium text-muted">Qty</span>
+                    <input
+                      className={inputClass}
+                      inputMode="decimal"
+                      value={line.quantity}
+                      onChange={(event) => patchLine(line.id, { quantity: event.target.value })}
+                    />
+                  </label>
+                  <label className="block">
+                    <span className="mb-1 block text-xs font-medium text-muted">Rate</span>
+                    <input
+                      className={inputClass}
+                      inputMode="decimal"
+                      value={line.rate}
+                      onChange={(event) => patchLine(line.id, { rate: event.target.value })}
+                    />
+                  </label>
+                  <label className="block">
+                    <span className="mb-1 block text-xs font-medium text-muted">Sq.ft</span>
+                    <input
+                      className={inputClass}
+                      inputMode="decimal"
+                      value={line.sqft}
+                      onChange={(event) => patchLine(line.id, { sqft: event.target.value })}
+                    />
+                  </label>
+                </div>
+              ) : (
+                <div className="mt-3 space-y-2">
+                  <span className="block text-xs font-medium text-muted">
+                    {bill.kind === "quotation" ? "Sizes on this item" : "Sizes"}
+                  </span>
+                  {line.sizes.map((part, sizeIndex) => {
+                    const area = partSqft(part);
+                    return (
+                      <div key={part.id} className="grid grid-cols-1 items-end gap-2 min-[380px]:grid-cols-[minmax(0,1fr)_4.75rem_2.75rem]">
+                        <label className="block">
+                          <span className="mb-1 block text-xs font-medium text-muted">Size (ft)</span>
+                          <input
+                            className={inputClass}
+                            value={part.size}
+                            placeholder="10 x 8"
+                            aria-label={`Size ${index + 1}.${sizeIndex + 1}`}
+                            onChange={(event) => {
+                              const sizes = line.sizes.map((item) =>
+                                item.id === part.id ? { ...item, size: event.target.value } : item,
+                              );
+                              const measures = measuresFromSizes(sizes);
+                              patchLine(line.id, measures ? { sizes, ...measures } : { sizes });
+                            }}
+                          />
+                        </label>
+                        <label className="block">
+                          <span className="mb-1 block text-xs font-medium text-muted">Qty</span>
+                          <input
+                            className={inputClass}
+                            inputMode="decimal"
+                            value={part.quantity}
+                            aria-label={`Size quantity ${index + 1}.${sizeIndex + 1}`}
+                            onChange={(event) => {
+                              const sizes = line.sizes.map((item) =>
+                                item.id === part.id ? { ...item, quantity: event.target.value } : item,
+                              );
+                              const measures = measuresFromSizes(sizes);
+                              patchLine(line.id, measures ? { sizes, ...measures } : { sizes });
+                            }}
+                          />
+                        </label>
+                        <button
+                          type="button"
+                          className="grid size-11 place-items-center rounded-lg text-muted hover:bg-canvas hover:text-ink"
+                          aria-label={`Remove size ${index + 1}.${sizeIndex + 1}`}
+                          onClick={() => {
+                            const sizes = line.sizes.filter((item) => item.id !== part.id);
+                            const measures = measuresFromSizes(sizes);
+                            patchLine(line.id, measures ? { sizes, ...measures } : { sizes });
+                          }}
+                        >
+                          <Trash2 className="size-4" aria-hidden="true" />
+                        </button>
+                        {area != null ? (
+                          <span className="col-span-3 text-xs text-muted">{area} sq.ft, rounded</span>
+                        ) : null}
+                      </div>
+                    );
+                  })}
+                  <button
+                    type="button"
+                    className={btnGhost}
+                    onClick={() => patchLine(line.id, { sizes: [...line.sizes, blankSize(line.quantity || "1")] })}
+                  >
+                    <Plus className="size-4" aria-hidden="true" />
+                    Add size
+                  </button>
+                  <div className="grid grid-cols-2 gap-2">
+                    <label className="block">
+                      <span className="mb-1 block text-xs font-medium text-muted">Rate</span>
+                      <input
+                        className={inputClass}
+                        inputMode="decimal"
+                        value={line.rate}
+                        onChange={(event) => patchLine(line.id, { rate: event.target.value })}
+                      />
+                    </label>
+                    <label className="block">
+                      <span className="mb-1 block text-xs font-medium text-muted">Sq.ft</span>
+                      <input
+                        className={inputClass}
+                        inputMode="decimal"
+                        value={line.sqft}
+                        onChange={(event) => patchLine(line.id, { sqft: event.target.value })}
+                      />
+                    </label>
+                  </div>
+                </div>
+              )}
+              {line.sizes.length === 0 ? (
+                <button
+                  type="button"
+                  className={`${btnGhost} mt-2`}
+                  onClick={() => patchLine(line.id, { sizes: [blankSize(line.quantity || "1")] })}
+                >
+                  <Plus className="size-4" aria-hidden="true" />
+                  Add size
+                </button>
+              ) : null}
               <div className="mt-2 flex items-center justify-between gap-2">
                 <span className="text-sm text-muted">{lineFormula(line)}</span>
                 <div className="flex items-center gap-1">
@@ -514,7 +763,9 @@ function Editor({
           Add line
         </button>
         <p className="mt-2 text-sm text-muted">
-          Amount is Qty × Rate. If Sq.ft is a number, it multiplies too. Use “-” when size does not apply. Tax or transport can be its own line.
+          {bill.kind === "quotation"
+            ? "A quotation lists every size under the item, each rounded, then added into Sq.ft. The rate is per sq.ft."
+            : "An invoice can take several sizes on one line. They are rounded, added, and printed as one size list. Leave sizes empty and Sq.ft as “-” to charge the rate only."}
         </p>
         <div className="mt-3 rounded-xl bg-olive-deep px-4 py-3 text-cream">
           <div className="flex items-end justify-between gap-3">
@@ -522,7 +773,30 @@ function Editor({
             <span className="text-2xl font-semibold tabular-nums">{formatInr(total)}</span>
           </div>
           <p className="mt-1 text-sm text-cream/80">{billWords(bill)}</p>
+          {advance !== 0 ? (
+            <div className="mt-2 flex items-end justify-between gap-3 border-t border-cream/20 pt-2">
+              <span className="text-sm">{balanceLabel(bill.kind)}</span>
+              <span className="text-lg font-semibold tabular-nums">{formatInr(balance)}</span>
+            </div>
+          ) : null}
         </div>
+        <label className="mt-3 block">
+          <span className="mb-1 block text-sm font-medium text-muted">{advanceLabel(bill.kind)}</span>
+          <input
+            className={inputClass}
+            inputMode="decimal"
+            value={bill.advance}
+            placeholder="0"
+            aria-label={advanceLabel(bill.kind)}
+            onChange={(event) => patchBill({ advance: event.target.value })}
+          />
+          <span className="mt-1 block text-sm text-muted">
+            {balanceLabel(bill.kind)} {formatInr(balance)}.{" "}
+            {bill.kind === "invoice"
+              ? "Leave blank if nothing was paid yet. Prints only when an advance is entered."
+              : "Optional booking amount. Prints only when it is entered."}
+          </span>
+        </label>
       </section>
 
       <details className="group rounded-xl border border-line bg-surface">
@@ -707,7 +981,7 @@ function Editor({
           </button>
         )}
       </div>
-      <p className="text-sm text-muted">Bills stay in this browser on this device.</p>
+      <p className="text-sm text-muted">Bills stay on this phone until you back them up.</p>
     </div>
   );
 }

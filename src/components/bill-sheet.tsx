@@ -3,19 +3,34 @@ import {
   type Bill,
   type Profile,
   billWords,
+  billAdvance,
+  billBalance,
   declarationFor,
   docTitle,
   footerLine,
   lineAmount,
   numberLabel,
   printSq,
+  sizeLabel,
+  filledSizes,
+  partSqft,
+  advanceLabel,
+  balanceLabel,
+  printedBuyer,
   wordsLabel,
 } from "@/lib/bill-model";
-import { formatDocDate, formatInr, formatPlain } from "@/lib/money";
+import { formatDocDate, formatInr, formatPlain, inrWords } from "@/lib/money";
+
+function money(n: number): string {
+  return `₹ ${formatInr(n)}`;
+}
 
 export function BillSheet({ bill, profile }: { bill: Bill; profile: Profile }) {
-  const pads = Math.max(0, MIN_BODY_ROWS - bill.lines.length);
-  const total = formatInr(bill.lines.reduce((sum, line) => sum + lineAmount(line), 0));
+  const pads = bill.kind === "quotation" ? 0 : Math.max(0, MIN_BODY_ROWS - bill.lines.length);
+  const total = bill.lines.reduce((sum, line) => sum + lineAmount(line), 0);
+  const advance = billAdvance(bill);
+  const balance = billBalance(bill);
+  const showAdvance = advance !== 0;
   const address = profile.address.split("\n").filter((line) => line.trim().length > 0);
 
   return (
@@ -44,7 +59,7 @@ export function BillSheet({ bill, profile }: { bill: Bill; profile: Profile }) {
 
         <div className="buyer-bar">BUYER</div>
         <div className="buyer">
-          <div className="buyer-text">{bill.buyer}</div>
+          <div className="buyer-text">{printedBuyer(bill)}</div>
           <div>PHONE : {bill.phone}</div>
           <div className="state-line">
             <span>STATE : {bill.state}</span>
@@ -67,11 +82,14 @@ export function BillSheet({ bill, profile }: { bill: Bill; profile: Profile }) {
             {bill.lines.map((line, index) => (
               <tr key={line.id}>
                 <td className="ctr">{index + 1}</td>
-                <td className="desc">{line.description}</td>
+                <td className="desc">
+                  {line.description}
+                  <SizeNotes line={line} kind={bill.kind} />
+                </td>
                 <td className="ctr">{line.quantity.trim() ? formatPlain(line.quantity) : ""}</td>
                 <td className="num">{line.rate.trim() ? formatPlain(line.rate) : ""}</td>
                 <td className="ctr">{printSq(line.sqft)}</td>
-                <td className="num">{formatInr(lineAmount(line))}</td>
+                <td className="num">{money(lineAmount(line))}</td>
               </tr>
             ))}
             {Array.from({ length: pads }, (_, index) => (
@@ -90,24 +108,48 @@ export function BillSheet({ bill, profile }: { bill: Bill; profile: Profile }) {
               <td className="lbl" colSpan={5}>
                 Total value
               </td>
-              <td className="amt">{total}</td>
+              <td className="amt">{money(total)}</td>
             </tr>
-            <tr className="tot gap">
-              <td colSpan={5} />
-              <td className="amt" />
-            </tr>
+            {bill.kind === "invoice" ? (
+              <tr className="tot gap">
+                <td colSpan={5} />
+                <td className="amt" />
+              </tr>
+            ) : null}
             <tr className="tot grand">
               <td className="lbl" colSpan={5}>
                 Grand total
               </td>
-              <td className="amt">{total}</td>
+              <td className="amt">{money(total)}</td>
             </tr>
+            {showAdvance ? (
+              <>
+                <tr className="tot">
+                  <td className="lbl" colSpan={5}>
+                    {advanceLabel(bill.kind)}
+                  </td>
+                  <td className="amt">{money(advance)}</td>
+                </tr>
+                <tr className="tot grand">
+                  <td className="lbl" colSpan={5}>
+                    {balanceLabel(bill.kind)}
+                  </td>
+                  <td className="amt">{money(balance)}</td>
+                </tr>
+              </>
+            ) : null}
           </tfoot>
         </table>
 
         <div className="words">
           <div className="words-lbl">{wordsLabel(bill.kind)}</div>
           <div className="words-val">{billWords(bill)}</div>
+          {showAdvance ? (
+            <>
+              <div className="words-lbl balance-lbl">{balanceLabel(bill.kind)} (in words)</div>
+              <div className="words-val">{inrWords(balance)}</div>
+            </>
+          ) : null}
         </div>
 
         <div className="bank">
@@ -141,4 +183,21 @@ export function BillSheet({ bill, profile }: { bill: Bill; profile: Profile }) {
       <p className="gen-note">{footerLine(bill.kind)}</p>
     </article>
   );
+}
+
+function SizeNotes({ line, kind }: { line: Bill["lines"][number]; kind: Bill["kind"] }) {
+  const parts = filledSizes(line);
+  if (!parts.length) return null;
+  if (kind === "quotation") {
+    return (
+      <div className="size-note">
+        {parts.map((part) => (
+          <div key={part.id}>
+            {sizeLabel(part)} = {partSqft(part)} sq.ft
+          </div>
+        ))}
+      </div>
+    );
+  }
+  return <div className="size-note">Size : {parts.map((part) => sizeLabel(part)).join(", ")}</div>;
 }
