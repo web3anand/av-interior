@@ -77,9 +77,11 @@ export const SAMPLE_PROFILE: Profile = {
 };
 
 export function pdfFileName(bill: Bill): string {
-  const label = bill.kind === "invoice" ? "Invoice" : "Quote";
+  const label = bill.kind === "invoice" ? "Invoice" : "Quotation";
   const number = bill.number.trim() || "draft";
-  return `${label} ${number}`.replace(/[\\/:*?"<>|]/g, "-");
+  const name = bill.customerName.trim();
+  const base = name ? `${label} ${number} - ${name}` : `${label} ${number}`;
+  return base.replace(/[\\/:*?"<>|]/g, "-");
 }
 
 export function sameCustomer(a: string, b: string): boolean {

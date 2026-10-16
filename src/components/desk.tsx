@@ -5,7 +5,6 @@ import {
   Lock,
   LockOpen,
   Plus,
-  Printer,
   Trash2,
 } from "lucide-react";
 import { BillSheet } from "@/components/bill-sheet";
@@ -26,6 +25,7 @@ import {
   measuresFromSizes,
   partSqft,
   pdfFileName,
+  todayISO,
   sameCustomer,
   blankSize,
   advanceLabel,
@@ -35,25 +35,31 @@ import { formatDocDate, formatInr } from "@/lib/money";
 import { readSignature } from "@/lib/signature";
 import { useBills } from "@/lib/store";
 
-type Pane = "edit" | "preview";
+type Screen = "invoices" | "quotes" | "bill" | "preview" | "letterhead" | "backup";
+
+const menuBar: { id: Screen; label: string }[] = [
+  { id: "invoices", label: "Invoices" },
+  { id: "quotes", label: "Quotes" },
+  { id: "bill", label: "Bill" },
+  { id: "preview", label: "Preview" },
+];
 
 const inputClass =
-  "min-h-11 w-full rounded-lg border border-line bg-surface px-3 text-base text-ink outline-none focus-visible:border-olive";
+  "min-h-11 w-full rounded-xl border border-line bg-white px-3 text-[15px] text-ink outline-none focus-visible:border-olive";
 const btnPrimary =
-  "inline-flex min-h-11 items-center justify-center gap-2 rounded-lg bg-olive px-4 text-sm font-semibold text-cream transition-colors duration-150 hover:bg-olive-deep disabled:opacity-50";
+  "inline-flex min-h-10 items-center justify-center gap-2 rounded-full bg-olive px-4 text-[13px] font-medium text-white transition-colors duration-150 hover:bg-olive-deep disabled:opacity-50";
 const btnGhost =
-  "inline-flex min-h-11 items-center justify-center gap-2 rounded-lg border border-line bg-surface px-3 text-sm font-semibold text-ink transition-colors duration-150 hover:border-olive";
+  "inline-flex min-h-10 items-center justify-center gap-2 rounded-full border border-line bg-white px-3 text-[13px] font-medium text-ink transition-colors duration-150 hover:bg-[#f0f0f2]";
 const btnQuiet =
-  "inline-flex min-h-11 items-center justify-center gap-2 rounded-lg px-3 text-sm font-semibold text-ink transition-colors duration-150 hover:bg-surface";
+  "inline-flex min-h-10 items-center justify-center gap-2 rounded-full px-3 text-[13px] font-medium text-muted transition-colors duration-150 hover:bg-[#f0f0f2] hover:text-ink";
 
 function buyerTitle(bill: Bill): string {
   const named = bill.customerName.trim();
   if (named) return named;
   const line = bill.buyer.split("\n").map((part) => part.trim()).find(Boolean);
-  return line || "No customer yet";
+  if (line) return line;
+  return `${docTitle(bill.kind)} ${bill.number.trim() || "draft"}`;
 }
-
-type KindFilter = "all" | DocKind;
 
 function matchesQuery(doc: Bill, query: string): boolean {
   const q = query.trim().toLowerCase();
@@ -91,9 +97,9 @@ export function Desk() {
   const selectBill = useBills((s) => s.selectBill);
   const loadSample = useBills((s) => s.loadSample);
 
-  const [pane, setPane] = useState<Pane>("edit");
+  const [screen, setScreen] = useState<Screen>("invoices");
+  const [menuOpen, setMenuOpen] = useState(false);
   const [query, setQuery] = useState("");
-  const [kindFilter, setKindFilter] = useState<KindFilter>("all");
   const [sigError, setSigError] = useState("");
   const [confirmDelete, setConfirmDelete] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -112,140 +118,196 @@ export function Desk() {
     document.title = bill ? pdfFileName(bill) : "AV Interior — Invoice & Quote";
   }, [bill]);
 
+  useEffect(() => {
+    if (!bill) return;
+    const today = todayISO();
+    if (bill.date !== today) patchBill({ date: today });
+  }, [bill, patchBill]);
+
+  const channel: DocKind | null = screen === "invoices" ? "invoice" : screen === "quotes" ? "quotation" : null;
   const visible = [...docs]
-    .filter((doc) => (kindFilter === "all" ? true : doc.kind === kindFilter))
+    .filter((doc) => (channel ? doc.kind === channel : true))
     .filter((doc) => matchesQuery(doc, query))
     .sort((a, b) => b.updatedAt - a.updatedAt);
 
+  function savePdf() {
+    if (!bill) return;
+    patchBill({ date: todayISO() });
+    window.setTimeout(() => window.print(), 40);
+  }
+
   function start(kind: DocKind) {
     newBill(kind);
-    setPane("edit");
+    setScreen("bill");
+    setMenuOpen(false);
+  }
+
+  function openScreen(next: Screen) {
+    setScreen(next);
+    setMenuOpen(false);
   }
 
   return (
-    <div className="desk flex min-h-dvh flex-col overflow-x-hidden bg-canvas text-ink lg:h-dvh lg:overflow-hidden">
-      <div className="no-print sticky top-0 z-20 border-b border-brass bg-olive-deep text-cream">
-        <header className="flex items-center justify-between gap-3 px-4 py-3 pt-[max(0.75rem,env(safe-area-inset-top))]">
-          <div className="flex min-w-0 items-center gap-3">
-            <span className="grid size-10 shrink-0 place-items-center rounded-lg border border-cream/20">
-              <HouseMark />
+    <div className="desk flex min-h-dvh flex-col overflow-x-hidden bg-canvas text-ink">
+      <header className="no-print sticky top-0 z-30 border-b border-line bg-white/80 backdrop-blur-xl">
+        <div className="mx-auto flex h-12 max-w-5xl items-center gap-3 px-4 sm:px-6">
+          <span className="grid size-7 shrink-0 place-items-center text-ink">
+            <HouseMark />
+          </span>
+          <p className="truncate text-[14px] font-semibold tracking-tight">{profile.name || "AV Interior"}</p>
+          <nav className="ml-2 hidden items-center md:flex" aria-label="Sections">
+            {menuBar.map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                className={`rounded-md px-2.5 py-1.5 text-[13px] ${
+                  screen === item.id ? "font-medium text-ink" : "text-muted hover:text-ink"
+                }`}
+                onClick={() => openScreen(item.id)}
+              >
+                {item.label}
+              </button>
+            ))}
+          </nav>
+          <div className="ml-auto flex items-center gap-1.5">
+            <span className="hidden sm:contents">
+              <button type="button" className={btnPrimary} disabled={!bill} onClick={savePdf}>
+                Save PDF
+              </button>
             </span>
-            <div className="min-w-0">
-              <p className="truncate font-display text-xl leading-none text-cream">
-                {profile.name || "AV Interior"}
-              </p>
-              <p className="mt-1 truncate text-sm text-cream/75">Invoice & quotation desk</p>
+            <button
+              type="button"
+              className="grid size-8 place-items-center rounded-full text-muted hover:bg-[#f0f0f2] hover:text-ink"
+              aria-label="Open menu"
+              aria-expanded={menuOpen}
+              onClick={() => setMenuOpen((open) => !open)}
+            >
+              <MenuIcon />
+            </button>
+          </div>
+        </div>
+        <nav className="mx-auto flex max-w-5xl gap-1 px-3 md:hidden" aria-label="Sections">
+          {menuBar.map((item) => (
+            <button
+              key={item.id}
+              type="button"
+              className={`min-h-10 flex-1 border-b-2 text-[12px] ${
+                screen === item.id ? "border-olive font-medium text-ink" : "border-transparent text-muted"
+              }`}
+              onClick={() => openScreen(item.id)}
+            >
+              {item.label}
+            </button>
+          ))}
+        </nav>
+        {menuOpen ? (
+          <div className="mx-auto max-w-5xl px-4 pb-3 sm:px-6">
+            <div className="rounded-2xl border border-line bg-white p-1 shadow-sm">
+              <button type="button" className="min-h-11 w-full rounded-xl px-3 text-left text-[14px] hover:bg-[#f0f0f2]" onClick={() => start("invoice")}>
+                New invoice
+              </button>
+              <button type="button" className="min-h-11 w-full rounded-xl px-3 text-left text-[14px] hover:bg-[#f0f0f2]" onClick={() => start("quotation")}>
+                New quotation
+              </button>
+              <button
+                type="button"
+                className="min-h-11 w-full rounded-xl px-3 text-left text-[14px] hover:bg-[#f0f0f2] disabled:opacity-40"
+                disabled={!bill}
+                onClick={() => {
+                  duplicateBill();
+                  openScreen("bill");
+                }}
+              >
+                Duplicate
+              </button>
+              <button
+                type="button"
+                className="min-h-11 w-full rounded-xl px-3 text-left text-[14px] hover:bg-[#f0f0f2] disabled:opacity-40 sm:hidden"
+                disabled={!bill}
+                onClick={savePdf}
+              >
+                Save PDF
+              </button>
+              <button type="button" className="min-h-11 w-full rounded-xl px-3 text-left text-[14px] hover:bg-[#f0f0f2]" onClick={() => openScreen("letterhead")}>
+                Letterhead
+              </button>
+              <button type="button" className="min-h-11 w-full rounded-xl px-3 text-left text-[14px] hover:bg-[#f0f0f2]" onClick={() => openScreen("backup")}>
+                Backup
+              </button>
+              {bill && confirmDelete ? (
+                <button
+                  type="button"
+                  className="min-h-11 w-full rounded-xl bg-[#f0f0f2] px-3 text-left text-[14px] font-medium"
+                  onClick={() => {
+                    deleteBill(bill.id);
+                    setConfirmDelete(false);
+                    openScreen(bill.kind === "quotation" ? "quotes" : "invoices");
+                  }}
+                >
+                  Confirm delete
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  className="min-h-11 w-full rounded-xl px-3 text-left text-[14px] text-muted hover:bg-[#f0f0f2] hover:text-ink disabled:opacity-40"
+                  disabled={!bill}
+                  onClick={() => setConfirmDelete(true)}
+                >
+                  Delete
+                </button>
+              )}
             </div>
           </div>
-          <button type="button" className={`${btnPrimary} hidden shrink-0 lg:inline-flex`} onClick={() => window.print()} disabled={!bill}>
-            <Printer className="size-4" aria-hidden="true" />
-            Save PDF
-          </button>
-        </header>
-      </div>
+        ) : null}
+      </header>
 
-      <div className="desk-grid lg:grid lg:min-h-0 lg:flex-1 lg:grid-cols-3">
-        <section
-          className={`no-print border-line lg:col-span-1 lg:block lg:overflow-y-auto lg:border-r ${
-            pane === "edit" ? "block" : "hidden"
-          }`}
-        >
-          {bill ? (
-            <Editor
-              bill={bill}
-              visible={visible}
-              query={query}
-              setQuery={setQuery}
-              kindFilter={kindFilter}
-              setKindFilter={setKindFilter}
-              customers={customers}
-              docs={docs}
-              activeId={activeId}
-              onSelect={(id) => {
-                selectBill(id);
-                setPane("edit");
-              }}
-              onStart={start}
-              onDuplicate={() => {
-                duplicateBill();
-                setPane("edit");
-              }}
-              onLoadSample={() => {
-                loadSample();
-                setPane("edit");
-              }}
-              onUsePrevious={() => {
-                newFromPrevious();
-                setPane("edit");
-              }}
-              onPickCustomer={pickCustomer}
-              confirmDelete={confirmDelete}
-              setConfirmDelete={setConfirmDelete}
-              onDelete={() => {
-                deleteBill(bill.id);
-                setConfirmDelete(false);
-              }}
-              patchBill={patchBill}
-              patchLine={patchLine}
-              addLine={addLine}
-              removeLine={removeLine}
-              profile={profile}
-              setProfile={setProfile}
-              restoreLetterhead={restoreLetterhead}
-              sigError={sigError}
-              setSigError={setSigError}
-              fileRef={fileRef}
-            />
-          ) : (
-            <EmptyDesk onStart={start} onLoadSample={loadSample} />
-          )}
-        </section>
-
-        <section
-          className={`sheet-column bg-canvas lg:col-span-2 lg:block lg:overflow-y-auto ${
-            pane === "preview" ? "block" : "hidden"
-          }`}
-        >
-          <p className="no-print px-4 pt-4 text-sm text-muted">
-            This bill is saved on this device. Save PDF uses the file name{" "}
-            <span className="font-semibold text-ink">{bill ? pdfFileName(bill) : "Invoice 1"}</span>. Turn on{" "}
-            <span className="font-semibold text-ink">Background graphics</span> so the green header prints.
-          </p>
-          <div className="px-3 py-4 pb-28 sm:px-5 lg:pb-4">
+      {screen === "preview" ? (
+        <section className="sheet-column mx-auto w-full max-w-5xl">
+          <div className="px-3 py-4 sm:px-5">
             {bill ? (
               <ScaledBill>
                 <BillSheet bill={bill} profile={profile} />
               </ScaledBill>
             ) : (
-              <p className="px-2 text-muted">Create a bill to see it here.</p>
+              <p className="text-muted">Create a bill to see it here.</p>
             )}
           </div>
         </section>
-      </div>
-      <nav className="no-print fixed inset-x-0 bottom-0 z-30 grid grid-cols-3 border-t border-cream/20 bg-olive-deep pb-[env(safe-area-inset-bottom)] text-cream lg:hidden">
-        <button
-          type="button"
-          className={`min-h-14 text-sm font-semibold ${pane === "edit" ? "bg-cream text-olive-deep" : ""}`}
-          onClick={() => setPane("edit")}
-        >
-          Edit
-        </button>
-        <button
-          type="button"
-          className={`min-h-14 text-sm font-semibold ${pane === "preview" ? "bg-cream text-olive-deep" : ""}`}
-          onClick={() => setPane("preview")}
-        >
-          Preview
-        </button>
-        <button
-          type="button"
-          className="min-h-14 text-sm font-semibold disabled:opacity-40"
-          onClick={() => window.print()}
-          disabled={!bill}
-        >
-          Save PDF
-        </button>
-      </nav>
+      ) : bill ? (
+        <Editor
+          screen={screen}
+          bill={bill}
+          visible={visible}
+          query={query}
+          setQuery={setQuery}
+          channel={channel ?? "invoice"}
+          onStart={start}
+          customers={customers}
+          docs={docs}
+          activeId={activeId}
+          onSelect={(id) => {
+            selectBill(id);
+            openScreen("bill");
+          }}
+          onUsePrevious={() => {
+            newFromPrevious();
+            openScreen("bill");
+          }}
+          onPickCustomer={pickCustomer}
+          patchBill={patchBill}
+          patchLine={patchLine}
+          addLine={addLine}
+          removeLine={removeLine}
+          profile={profile}
+          setProfile={setProfile}
+          restoreLetterhead={restoreLetterhead}
+          sigError={sigError}
+          setSigError={setSigError}
+          fileRef={fileRef}
+        />
+      ) : (
+        <EmptyDesk onStart={start} onLoadSample={loadSample} />
+      )}
     </div>
   );
 }
@@ -275,24 +337,19 @@ function EmptyDesk({
 }
 
 function Editor({
+  screen,
   bill,
   visible,
   query,
   setQuery,
-  kindFilter,
-  setKindFilter,
+  channel,
+  onStart,
   customers,
   docs,
   activeId,
   onSelect,
-  onStart,
-  onDuplicate,
-  onLoadSample,
   onUsePrevious,
   onPickCustomer,
-  confirmDelete,
-  setConfirmDelete,
-  onDelete,
   patchBill,
   patchLine,
   addLine,
@@ -304,24 +361,19 @@ function Editor({
   setSigError,
   fileRef,
 }: {
+  screen: Screen;
   bill: Bill;
   visible: Bill[];
   query: string;
   setQuery: (value: string) => void;
-  kindFilter: KindFilter;
-  setKindFilter: (value: KindFilter) => void;
+  channel: DocKind;
+  onStart: (kind: DocKind) => void;
   customers: Customer[];
   docs: Bill[];
   activeId: string;
   onSelect: (id: string) => void;
-  onStart: (kind: DocKind) => void;
-  onDuplicate: () => void;
-  onLoadSample: () => void;
   onUsePrevious: () => void;
   onPickCustomer: (id: string) => void;
-  confirmDelete: boolean;
-  setConfirmDelete: (value: boolean) => void;
-  onDelete: () => void;
   patchBill: (patch: Partial<Omit<Bill, "id" | "lines">>) => void;
   patchLine: (lineId: string, patch: Partial<Omit<Line, "id">>) => void;
   addLine: () => void;
@@ -340,59 +392,37 @@ function Editor({
     .filter(
       (doc) =>
         doc.id !== bill.id &&
+        doc.kind === bill.kind &&
         ((bill.customerId && doc.customerId === bill.customerId) ||
           sameCustomer(doc.customerName, bill.customerName)),
     )
     .sort((a, b) => b.updatedAt - a.updatedAt);
-  const filters: { id: KindFilter; label: string }[] = [
-    { id: "all", label: "All" },
-    { id: "invoice", label: "Invoices" },
-    { id: "quotation", label: "Quotes" },
-  ];
+
+  const channelLabel = channel === "invoice" ? "Invoices" : "Quotations";
 
   return (
-    <div className="flex flex-col gap-6 p-4 pb-28 lg:pb-8">
+    <div className="mx-auto flex w-full max-w-3xl flex-col gap-5 p-4 pb-10 sm:px-6">
+      {screen === "invoices" || screen === "quotes" ? (
       <div>
-        <div className="mb-2 flex items-center justify-between gap-2">
-          <h2 className="font-display text-lg">Saved bills</h2>
-          <span className="text-sm text-muted">{visible.length}</span>
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <h2 className="font-display text-lg">{channelLabel}</h2>
+          <button type="button" className={btnPrimary} onClick={() => onStart(channel)}>
+            <Plus className="size-4" aria-hidden="true" />
+            New
+          </button>
         </div>
         <input
           className={inputClass}
           value={query}
           onChange={(event) => setQuery(event.target.value)}
-          placeholder="Invoice 1, quote 2, or customer"
-          aria-label="Search bills"
+          placeholder={channel === "invoice" ? "Search invoice number or customer" : "Search quotation number or customer"}
+          aria-label={channel === "invoice" ? "Search invoices" : "Search quotations"}
         />
-        <div className="mt-2 flex flex-wrap gap-2">
-          {filters.map((item) => (
-            <button
-              key={item.id}
-              type="button"
-              className={`min-h-11 rounded-full px-3 text-sm font-semibold ${
-                kindFilter === item.id ? "bg-olive text-cream" : "bg-surface text-ink"
-              }`}
-              onClick={() => setKindFilter(item.id)}
-            >
-              {item.label}
-            </button>
-          ))}
-        </div>
-        <p className="mt-2 text-sm text-muted">Every change is saved automatically on this phone.</p>
-        <PhoneBackup />
-        <div className="mt-2 flex flex-wrap gap-2">
-          <button type="button" className={btnGhost} onClick={() => onStart("invoice")}>
-            <Plus className="size-4" aria-hidden="true" />
-            Invoice
-          </button>
-          <button type="button" className={btnGhost} onClick={() => onStart("quotation")}>
-            <Plus className="size-4" aria-hidden="true" />
-            Quote
-          </button>
-        </div>
-        <ul className="mt-3 max-h-48 space-y-1 overflow-y-auto">
+        <ul className="mt-3 space-y-1">
           {visible.length === 0 ? (
-            <li className="px-1 py-2 text-sm text-muted">No bills match that search.</li>
+            <li className="px-1 py-2 text-sm text-muted">
+              {query.trim() ? "Nothing matches that search." : `No ${channelLabel.toLowerCase()} yet.`}
+            </li>
           ) : (
             visible.map((doc) => {
               const active = doc.id === activeId;
@@ -401,8 +431,8 @@ function Editor({
                   <button
                     type="button"
                     onClick={() => onSelect(doc.id)}
-                    className={`flex min-h-12 w-full items-center justify-between gap-3 rounded-lg border-l-4 px-3 py-3 text-left ${
-                      active ? "border-olive bg-surface" : "border-transparent hover:bg-surface"
+                    className={`flex min-h-12 w-full items-center justify-between gap-3 rounded-xl px-3 py-2 text-left ${
+                      active ? "bg-[#f0f0f2]" : "hover:bg-[#f5f5f7]"
                     }`}
                   >
                     <span className="min-w-0">
@@ -419,39 +449,20 @@ function Editor({
           )}
         </ul>
       </div>
+      ) : null}
 
+      {screen === "bill" ? (
+      <>
       <section>
         <h2 className="mb-3 font-display text-lg">
-          <span className="mr-2 font-sans text-sm font-semibold text-brass">01</span>
-          Document
+          {bill.kind === "invoice" ? "Invoice" : "Quotation"} {bill.number.trim() || ""}
         </h2>
-        <div className="grid grid-cols-2 gap-2">
-          <button
-            type="button"
-            className={bill.kind === "invoice" ? btnPrimary : btnGhost}
-            onClick={() => patchBill({ kind: "invoice" })}
-          >
-            Invoice
-          </button>
-          <button
-            type="button"
-            className={bill.kind === "quotation" ? btnPrimary : btnGhost}
-            onClick={() => patchBill({ kind: "quotation" })}
-          >
-            Quotation
-          </button>
-        </div>
-        <div className="mt-3 grid gap-3 sm:grid-cols-2">
-          <label className="block">
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div>
             <span className="mb-1 block text-sm font-medium text-muted">Date</span>
-            <input
-              type="date"
-              className={inputClass}
-              value={bill.date}
-              onChange={(event) => patchBill({ date: event.target.value })}
-            />
-            <span className="mt-1 block text-sm text-muted">Prints as {formatDocDate(bill.date)}</span>
-          </label>
+            <p className={`${inputClass} flex items-center bg-[#f5f5f7]`}>{formatDocDate(todayISO())}</p>
+            <span className="mt-1 block text-sm text-muted">Always today. Saving the PDF stamps this date.</span>
+          </div>
           <label className="block">
             <span className="mb-1 block text-sm font-medium text-muted">
               {bill.kind === "invoice" ? "Invoice number" : "Quotation number"}
@@ -468,10 +479,7 @@ function Editor({
       </section>
 
       <section>
-        <h2 className="mb-3 font-display text-lg">
-          <span className="mr-2 font-sans text-sm font-semibold text-brass">02</span>
-          Buyer
-        </h2>
+        <h2 className="mb-3 font-display text-lg">Customer</h2>
         <label className="block">
           <span className="mb-1 block text-sm font-medium text-muted">Saved customer</span>
           <select
@@ -541,7 +549,7 @@ function Editor({
         <div className="mt-3">
           <button type="button" className={`${btnGhost} disabled:opacity-50`} onClick={onUsePrevious} disabled={earlier.length === 0}>
             <Copy className="size-4" aria-hidden="true" />
-            New from their last bill
+            New from their last {bill.kind === "invoice" ? "invoice" : "quotation"}
           </button>
           {earlier.length === 0 ? (
             <p className="mt-2 text-sm text-muted">No earlier bill for this customer yet. The name is kept for the next one.</p>
@@ -567,10 +575,7 @@ function Editor({
       </section>
 
       <section>
-        <h2 className="mb-3 font-display text-lg">
-          <span className="mr-2 font-sans text-sm font-semibold text-brass">03</span>
-          Goods
-        </h2>
+        <h2 className="mb-3 font-display text-lg">Items</h2>
         <ul className="space-y-3">
           {bill.lines.map((line, index) => (
             <li key={line.id} className="rounded-xl border border-line bg-surface p-3">
@@ -767,15 +772,15 @@ function Editor({
             ? "A quotation lists every size under the item, each rounded, then added into Sq.ft. The rate is per sq.ft."
             : "An invoice can take several sizes on one line. They are rounded, added, and printed as one size list. Leave sizes empty and Sq.ft as “-” to charge the rate only."}
         </p>
-        <div className="mt-3 rounded-xl bg-olive-deep px-4 py-3 text-cream">
+        <div className="mt-3 rounded-2xl border border-line bg-white px-4 py-3">
           <div className="flex items-end justify-between gap-3">
-            <span className="text-sm">Grand total</span>
-            <span className="text-2xl font-semibold tabular-nums">{formatInr(total)}</span>
+            <span className="text-[13px] text-muted">Grand total</span>
+            <span className="text-2xl font-semibold tracking-tight tabular-nums">{formatInr(total)}</span>
           </div>
-          <p className="mt-1 text-sm text-cream/80">{billWords(bill)}</p>
+          <p className="mt-1 text-[13px] text-muted">{billWords(bill)}</p>
           {advance !== 0 ? (
-            <div className="mt-2 flex items-end justify-between gap-3 border-t border-cream/20 pt-2">
-              <span className="text-sm">{balanceLabel(bill.kind)}</span>
+            <div className="mt-2 flex items-end justify-between gap-3 border-t border-line pt-2">
+              <span className="text-[13px] text-muted">{balanceLabel(bill.kind)}</span>
               <span className="text-lg font-semibold tabular-nums">{formatInr(balance)}</span>
             </div>
           ) : null}
@@ -798,14 +803,13 @@ function Editor({
           </span>
         </label>
       </section>
+      </>
+      ) : null}
 
-      <details className="group rounded-xl border border-line bg-surface">
-        <summary className="flex min-h-12 cursor-pointer list-none items-center justify-between px-4 py-3 font-semibold">
-          Letterhead, bank & signature
-          <span className="text-sm font-medium text-muted group-open:hidden">Edit</span>
-        </summary>
-        <div className="space-y-3 border-t border-line px-4 py-4">
-          <label className="block">
+      {screen === "letterhead" ? (
+      <section className="space-y-3">
+        <h2 className="font-display text-lg">Letterhead</h2>
+        <label className="block">
             <span className="mb-1 block text-sm font-medium text-muted">Company name</span>
             <input
               className={inputClass}
@@ -954,34 +958,10 @@ function Editor({
           <button type="button" className={btnQuiet} onClick={restoreLetterhead}>
             Restore original letterhead
           </button>
-        </div>
-      </details>
+      </section>
+      ) : null}
 
-      <div className="flex flex-wrap gap-2">
-        <button type="button" className={btnGhost} onClick={onDuplicate}>
-          <Copy className="size-4" aria-hidden="true" />
-          Duplicate
-        </button>
-        <button type="button" className={btnQuiet} onClick={onLoadSample}>
-          Load sample
-        </button>
-        {confirmDelete ? (
-          <>
-            <button type="button" className={btnPrimary} onClick={onDelete}>
-              Delete this bill
-            </button>
-            <button type="button" className={btnGhost} onClick={() => setConfirmDelete(false)}>
-              Keep
-            </button>
-          </>
-        ) : (
-          <button type="button" className={btnQuiet} onClick={() => setConfirmDelete(true)}>
-            <Trash2 className="size-4" aria-hidden="true" />
-            Delete
-          </button>
-        )}
-      </div>
-      <p className="text-sm text-muted">Bills stay on this phone until you back them up.</p>
+      {screen === "backup" ? <PhoneBackup /> : null}
     </div>
   );
 }
@@ -1019,6 +999,14 @@ function ScaledBill({ children }: { children: ReactNode }) {
         </div>
       </div>
     </div>
+  );
+}
+
+function MenuIcon() {
+  return (
+    <svg viewBox="0 0 24 24" className="size-4" fill="none" stroke="currentColor" strokeWidth="1.75" aria-hidden="true">
+      <path d="M4 7h16M4 12h16M4 17h16" strokeLinecap="round" />
+    </svg>
   );
 }
 

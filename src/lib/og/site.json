@@ -1,4 +1,7 @@
 {
-  "title": "AV Interior — Invoice & Quote",
-  "color": "3F5C2A"
+  "title": "AV Interior \u2014 Invoice & Quote",
+  "card": "custom",
+  "color": "3F5C2A",
+  "banner": "/x-banner.jpg",
+  "description": "Print invoices and quotations for AV Interior Decoration in the original bill format."
 }

@@ -260,6 +260,7 @@ export const useBills = create<BillsState>()(
           ...current,
           id: crypto.randomUUID(),
           number: nextBillNumber(get().docs, current.kind),
+          date: todayISO(),
           lines: cloneLines(current.lines),
           updatedAt: Date.now(),
         };
@@ -275,6 +276,7 @@ export const useBills = create<BillsState>()(
       loadSample: () => {
         const bill = sampleBill(crypto.randomUUID(), crypto.randomUUID());
         bill.number = nextBillNumber(get().docs, "invoice");
+        bill.date = todayISO();
         bill.updatedAt = Date.now();
         set((s) => ({ docs: [bill, ...s.docs], activeId: bill.id }));
       },
